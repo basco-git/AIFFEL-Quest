@@ -7,7 +7,7 @@
 > - 레포지토리 fork → clone 후 `README.md`, `PRD.pdf`, `ORBIT-Scheduler.exe`를 확인했습니다.
 > - 레포에는 소스 코드 없이 실행파일만 있어서, exe를 **실행하지 않고** 안에 묶인 ZIP 리소스(앱 소스 151개 항목)를 추출해 코드를 읽었습니다.
 > - 아래 코드 경로는 exe 내부 기준(`ORBIT-Scheduler/app/...`)입니다.
-> - 실행 화면 근거는 개발자 시연을 보며 `Quest_03/review-evidence/`에 캡처를 추가할 예정입니다. 해당 칸은 `📷 캡처 추가 예정`으로 표시했습니다.
+> - 그 뒤 리뷰어 PC에서 `ORBIT-Scheduler.exe`를 실행해(Windows 보안 경고 후 실행) 브라우저로 직접 테스트했습니다. 캡처는 `Quest_03/review-evidence/`에 있습니다.
 
 ---
 
@@ -31,7 +31,7 @@
 | FR-15 상태 조회 링크 | O | 32바이트 랜덤 `statusCapability`는 해시로만 저장. 응답에는 상태·시간만 담김 |
 | FR-05 3D 보기 | △ | PRD는 Three.js 3D였으나 실제로는 2D `three-day`(어제/오늘/내일) 브리핑과 월간 달력으로 바뀐 것으로 보임 |
 | FR-17/18 Supabase 전환·RLS | X | `database/supabase/migrations`·`policies`에는 README만 있음. 클라우드 쪽은 Supabase 대신 Cloudflare Worker/D1 중계로 바뀐 것으로 보임 (`Readme.txt`) |
-| AC-08 두 계정 격리 | X | `ownerId='local-owner'` 1인 고정 구조. `database/seeds/scenarios.json` 상태가 `"fixture-plan-not-loaded"` |
+| AC-08 두 계정 격리 | X | `ownerId='local-owner'` 1인 고정 구조. `database/seeds/scenarios.json` 상태가 `"fixture-plan-not-loaded"` (아래 "사용자 구분 확인" 참고) |
 
 **근거 코드 1 — Todo 생성/수정/삭제와 입력 검증** (`apps/api/src/application/scheduler.mjs`)
 ```js
@@ -58,11 +58,40 @@ decide(owner,id,action,body,key) {return repo.transaction(()=>idem(`decision:${o
 ```
 → PRD 5.3(승인 순간 재검사)과 7.1(pending은 시간을 점유하지 않음)이 코드에 그대로 반영되어 있습니다.
 
-**실행 화면 근거**
-- 📷 로그인(초기 비밀번호 설정) 화면 — `review-evidence/01-setup.png` (캡처 추가 예정)
-- 📷 할 일 추가 → 완료 체크 → 수정 → 삭제 — `review-evidence/02-todo-crud.png` (캡처 추가 예정)
-- 📷 프로그램 종료 후 재실행 시 데이터 유지 — `review-evidence/03-persist.png` (캡처 추가 예정)
-- 📷 고객 신청 → 승인함 승인 → 일정 반영 — `review-evidence/04-booking.png` (캡처 추가 예정)
+**실행 화면 근거** (리뷰어 PC에서 exe 실행, 2026-10-30)
+
+| 단계 | 결과 | 캡처 |
+|---|---|---|
+| 로그인 후 대시보드 | ✅ 진입 성공. 처음에는 "예시" 데이터가 표시됨 | ![대시보드](review-evidence/00-dashboard-demo.jpg) |
+| 할 일 추가 | ✅ 목록에 추가되고 "0 / 1 완료"로 갱신 | ![추가](review-evidence/01-todo-add.jpg) |
+| 완료 체크 | ✅ 취소선이 그어지고 "1 / 2 완료"로 갱신 | ![완료](review-evidence/02-todo-complete.jpg) |
+| 빈 제목(공백만)으로 저장 | ✅ 저장되지 않고 "1~160자의 내용을 입력하세요." 표시 (서버 검증 동작) | ![검증](review-evidence/03-todo-validation.jpg) |
+| 수정 ("항목 수정" 폼) | ✅ "저장했습니다." 표시 후 제목 변경 | ![수정](review-evidence/04-todo-edit.jpg) |
+| 삭제 | ❌ "Failed to fetch" 표시. 이후 로컬 서버(127.0.0.1) 응답 없음. 재현 여부 확인 중 | ![삭제 실패](review-evidence/05-todo-delete-failed.jpg) |
+| 재시작 후 데이터 유지 | ⏳ 확인 예정 ("재시작 후 유지 확인용" 할 일을 남겨 둠) | - |
+
+**사용자 구분 확인 — 1인 전용 구조**
+- 리뷰어가 처음 로그인했을 때 대시보드에 "고객 포털 개선 미팅" 같은 일정이 보여서, 다른 사용자(개발자)의 데이터가 노출되는지 확인했습니다.
+- **확인 결과, 보인 일정은 개발자 데이터가 아니라 코드에 고정된 예시 데이터입니다.** 누가 실행해도 똑같이 보입니다.
+  ```js
+  // apps/web/src/app/owner/demo-state.mjs
+  return {_demo:true,settings:{displayName:'ORBIT 예시'}, ... events:[
+   {id:'demo-today',title:'고객 포털 개선 미팅', ... participants:'김민수 PM · 이서연 디자이너 · 박지훈 개발자', ...}
+  // apps/web/src/app/owner/index.mjs — 기본값이 예시 모드
+  let demoMode=sessionStorage.getItem('orbit-today-demo')!=='off';
+  ```
+  "예시 · 실제 데이터 보기" 버튼으로 전환하면, 리뷰어 PC의 실제 데이터는 비어 있었습니다(할 일 0개, 캡처 01 직전 화면). 데이터는 각자 PC의 `%LOCALAPPDATA%\ORBIT Scheduler\data`에 저장되므로 개발자 데이터가 다른 PC로 넘어가지 않습니다.
+- **다만 앱 자체는 사용자를 구분하지 않는 1인용입니다.**
+  ```js
+  // apps/api/src/bootstrap/server.mjs
+  export function createApp({dbPath, ownerId='local-owner', ...}={}) {
+    ...
+    if(route==='state'&&req.method==='GET') result=app.state(ownerId);   // 모든 요청이 같은 ownerId
+  ```
+  - 계정이나 회원가입 없이 **PC당 비밀번호 1개**만 있습니다.
+  - 같은 PC를 여러 사람이 쓰면 비밀번호를 아는 사람은 모두 같은 일정과 할 일을 봅니다.
+  - PRD의 "계정 격리(사용자 A가 B의 데이터를 읽거나 바꿀 수 없음)"와 AC-08, 과제 요구인 "사용자별 RLS 검증"은 이 구조로는 확인할 수 없습니다.
+- 예시 데이터가 기본으로 켜져 있고 표시가 작은 버튼뿐이라, 처음 쓰는 사람은 **다른 사람의 실제 일정으로 오해하기 쉽습니다.** 리뷰어도 처음에 그렇게 받아들였습니다.
 
 ---
 
@@ -177,8 +206,13 @@ res.setHeader('Set-Cookie',`orbit=${token}; HttpOnly; SameSite=Strict; Path=/; M
 - `database/seeds/scenarios.json`에 경쟁 승인, 만료, DST 같은 좋은 시나리오가 정의되어 있지만, 상태가 `fixture-plan-not-loaded`입니다.
 - 제안: PRD 13장의 AC-01(재시작 유지), AC-04(동시 승인), AC-05(멱등성)를 `node --test`로 자동화하고, 실패→수정 과정을 `TROUBLESHOOTING.md`에 남기기. ART 3번 항목의 근거로도 쓸 수 있습니다.
 
-**⑥ 작은 사용성 개선**
-- 할 일 수정이 브라우저 `prompt()` 창으로 열립니다(`features/tasks/index.mjs`). 같은 앱의 다른 편집 화면처럼 인라인 폼으로 바꾸면 일관성이 좋아집니다.
+**⑥ 사용자 구분과 예시 데이터 표시**
+- 사용자 구분: 지금은 `ownerId='local-owner'` 1인 구조입니다. 과제의 "사용자별 데이터 분리·RLS" 요구에 맞추려면 로그인 계정별로 `owner_id`를 정하는 구조가 필요합니다. 예를 들어 Supabase Auth의 `auth.uid()`와 RLS 정책을 쓰거나, 로컬에서도 사용자 테이블과 세션의 사용자 ID를 쓰는 방식입니다. 개인 PC 전용 앱으로 범위를 정한 것이라면 README와 PRD에 "1인용"이라고 밝혀 두는 것을 제안합니다.
+- 예시 데이터: 첫 화면에서 예시 모드가 기본으로 켜져 있습니다. 실제 데이터와 헷갈리지 않도록 두 가지를 제안합니다.
+  - 기본값을 실제 데이터로 두거나, 실제 데이터가 비어 있을 때만 예시를 보여 주기
+  - 예시일 때는 화면 상단에 "예시 데이터입니다" 배너를 크게 표시하기
+
+**⑦ 작은 사용성 개선**
 - 할 일 삭제에 확인 단계나 실행 취소가 없습니다.
 
 ---
@@ -192,7 +226,8 @@ Todo 앱 과제를 **"고객 예약을 직접 승인하는 개인 일정 서비�
 - **아쉬운 점**:
   - 소스가 레포에 없고 exe만 있어서 리뷰하기 어렵습니다.
   - 코드에 실제 연락처가 들어 있습니다.
-  - PRD의 Supabase·RLS·계정 격리가 실제 구현과 다릅니다.
+  - PRD의 Supabase·RLS·계정 격리가 실제 구현과 다릅니다. 실제 앱은 PC당 비밀번호 1개인 1인용 구조입니다.
+  - 예시 데이터가 기본으로 보여서, 처음 쓰는 사람이 다른 사람의 일정으로 오해할 수 있습니다.
   - 디버깅·테스트 기록이 남아 있지 않습니다.
 
 위 개선 제안 ①·②만 반영해도 공개 레포로서 완성도가 크게 올라갈 것 같습니다. 고생 많으셨습니다! 🙌
