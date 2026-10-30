@@ -67,8 +67,11 @@ decide(owner,id,action,body,key) {return repo.transaction(()=>idem(`decision:${o
 | 완료 체크 | ✅ 취소선이 그어지고 "1 / 2 완료"로 갱신 | ![완료](review-evidence/02-todo-complete.jpg) |
 | 빈 제목(공백만)으로 저장 | ✅ 저장되지 않고 "1~160자의 내용을 입력하세요." 표시 (서버 검증 동작) | ![검증](review-evidence/03-todo-validation.jpg) |
 | 수정 ("항목 수정" 폼) | ✅ "저장했습니다." 표시 후 제목 변경 | ![수정](review-evidence/04-todo-edit.jpg) |
-| 삭제 | ❌ "Failed to fetch" 표시. 이후 로컬 서버(127.0.0.1) 응답 없음. 재현 여부 확인 중 | ![삭제 실패](review-evidence/05-todo-delete-failed.jpg) |
-| 재시작 후 데이터 유지 | ⏳ 확인 예정 ("재시작 후 유지 확인용" 할 일을 남겨 둠) | - |
+| 삭제 (1차) | ⚠️ "Failed to fetch" 표시. 이후 로컬 서버(127.0.0.1) 응답 없음 | ![삭제 실패](review-evidence/05-todo-delete-failed.jpg) |
+| 재시작 후 데이터 유지 | ✅ 프로그램을 다시 실행해도(포트 60890 → 57895) 할 일 2개와 완료 상태가 그대로 유지됨 | ![재시작 유지](review-evidence/06-persist-after-restart.jpg) |
+| 삭제 (2차, 재시작 후) | ✅ 정상 삭제 ("0 / 1 완료"). 삭제 후에도 서버가 정상 응답함 | ![삭제](review-evidence/07-todo-delete.jpg) |
+
+> 1차 삭제 실패는 재시작 후 같은 동작으로 **재현되지 않았습니다.** 1차 때 삭제 요청은 처리되지 않았고(재시작 후에도 그 항목이 남아 있었음), 그 시점에 실행 창(서버)이 종료된 것으로 보입니다. 코드상 삭제 처리에서 서버를 멈추게 할 부분은 찾지 못했습니다. 다만 실행 창이 예기치 않게 꺼질 때 화면에 "Failed to fetch"만 보이므로, 개선 제안 ⑧을 참고해 주세요.
 
 **사용자 구분 확인 — 1인 전용 구조**
 - 리뷰어가 처음 로그인했을 때 대시보드에 "고객 포털 개선 미팅" 같은 일정이 보여서, 다른 사용자(개발자)의 데이터가 노출되는지 확인했습니다.
@@ -134,7 +137,7 @@ requireValue(profile.emailAddress?.toLowerCase()===ACCOUNT,
 |---|---|
 | 1인용(사용자 구분 없음) | **관련 있음.** 개인 Google 계정 하나에 맞춘 설계라 다중 사용자 구조가 빠졌고, PRD의 Supabase·RLS·계정 격리도 구현되지 않음 |
 | 첫 화면에 남의 일정처럼 보이는 데이터 | 관련 없음. `demo-state.mjs`의 고정 예시 데이터 |
-| 삭제 시 "Failed to fetch" | 관련 가능성 낮음. 리뷰어 PC는 Google이 연결되지 않아 동기화가 바로 `not_connected`로 끝남. 원인은 별도 확인 필요 |
+| 삭제 시 "Failed to fetch" | 관련 가능성 낮음. 리뷰어 PC는 Google이 연결되지 않아 동기화가 바로 `not_connected`로 끝남. 재시작 후에는 재현되지 않음 |
 
 ---
 
@@ -192,7 +195,7 @@ res.setHeader('Set-Cookie',`orbit=${token}; HttpOnly; SameSite=Strict; Path=/; M
 
 ---
 
-[X]  **3. 에러가 난 부분을 디버깅하여 "문제를 해결한 기록"을 남겼나요?**
+[X]  **3. 에러가 난 부분을 디버깅하여 "문제를 해결한 기록"을 남겼나요?** — 확인 불가
 - 에이전트가 만든 코드의 오류를 어떻게 발견하고 수정했는지
 - 새로운 시도 및 추가 실험이 기록되어 있는지
 
@@ -209,7 +212,7 @@ res.setHeader('Set-Cookie',`orbit=${token}; HttpOnly; SameSite=Strict; Path=/; M
 - 번들 `Readme.txt`에 버전별 변경 이력이 있습니다. 예: "업데이트: 로그인 팝업은 오늘만, 메인 화면은 어제/오늘/내일 1:4:1 폭", "업데이트 후 프로그램을 재시작하세요".
 - 검증하지 못한 부분을 숨기지 않고 적어 둔 점은 좋습니다. 예: "실제 휴대폰/Google 계정의 종단간 연동은 아직 검증하지 않았습니다. APK는 개발 서명판입니다."
 - `AGENTS.md`(api/web/database)에 에이전트 작업 규칙이 정리되어 있습니다. 예: owner_id 신뢰 금지, 로그에 쿠키·연락처 금지, RLS는 익명·A·B 계정으로 실제 검사.
-- 다만 "어떤 오류가 났고 어떻게 고쳤는지"를 보여주는 기록은 없어서 **X**로 표기했습니다. 개발자 설명에서 디버깅 사례가 나오면 근거를 추가하고 O로 바꾸겠습니다.
+- 다만 "어떤 오류가 났고 어떻게 고쳤는지"를 보여주는 기록은 레포·번들·개발자 설명 어디에서도 확인할 수 없었습니다. 그래서 **확인 불가(X)**로 표기했습니다.
 
 ---
 
@@ -263,6 +266,7 @@ res.setHeader('Set-Cookie',`orbit=${token}; HttpOnly; SameSite=Strict; Path=/; M
 
 **⑧ 작은 사용성 개선**
 - 할 일 삭제에 확인 단계나 실행 취소가 없습니다.
+- 서버(실행 창)가 꺼지면 화면에는 브라우저 기본 메시지인 "Failed to fetch"만 표시됩니다. `platform/api/index.mjs`의 `api()`에서 `fetch` 실패를 잡아 "ORBIT 실행 창이 종료되었습니다. 프로그램을 다시 실행해 주세요."처럼 안내하면 사용자가 원인을 알 수 있습니다.
 
 ---
 
