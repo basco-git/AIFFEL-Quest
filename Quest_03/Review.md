@@ -93,6 +93,49 @@ decide(owner,id,action,body,key) {return repo.transaction(()=>idem(`decision:${o
   - PRD의 "계정 격리(사용자 A가 B의 데이터를 읽거나 바꿀 수 없음)"와 AC-08, 과제 요구인 "사용자별 RLS 검증"은 이 구조로는 확인할 수 없습니다.
 - 예시 데이터가 기본으로 켜져 있고 표시가 작은 버튼뿐이라, 처음 쓰는 사람은 **다른 사람의 실제 일정으로 오해하기 쉽습니다.** 리뷰어도 처음에 그렇게 받아들였습니다.
 
+**Google 캘린더 연동 분석 — 1인용 구조가 된 배경**
+
+개발자 설명에 따르면 이 앱은 Google 캘린더 연동을 중심으로 기획되었습니다. 관련 코드를 확인한 결과, **연동 대상이 개발자 본인의 Google 계정 하나로 고정**되어 있습니다. 이 설계가 앱 전체를 "개발자 개인 PC용 1인 도구"로 만든 직접적인 원인으로 보입니다.
+
+1) 연동 계정이 코드에 고정되어 있음 (`infrastructure/calendar-providers/google.mjs`)
+```js
+const ACCOUNT='charlie.s*****@gmail.com';            // 개발자 계정 (리뷰에서는 일부 가림)
+const SCOPES='.../auth/gmail.readonly .../auth/calendar.readonly';
+...
+// OAuth 콜백: 로그인한 Google 계정이 ACCOUNT와 다르면 거부
+requireValue(profile.emailAddress?.toLowerCase()===ACCOUNT,
+  '요청한 Google 계정과 다릅니다. charlie.s*****@gmail.com으로 연결하세요.',403,'ACCOUNT_MISMATCH');
+```
+- 다른 사람이 exe를 실행해서 자기 Google 계정으로 연결하려고 하면 **`ACCOUNT_MISMATCH`로 항상 거부**됩니다.
+- 그래서 리뷰어를 포함한 다른 사용자는 Gmail·Google 일정 연동을 쓸 수 없습니다.
+- 서버의 `ownerId='local-owner'`(사용자 1명)와 이 고정 계정이 합쳐져서, 결과적으로 **"이 PC + 이 Google 계정" 한 사람만 쓰는 구조**가 되었습니다.
+
+2) 동기화 방식: Google → ORBIT 한 방향 가져오기 (`sync-manager.mjs`, `inputs.mjs`)
+
+| 대상 | 주기 | 동작 |
+|---|---|---|
+| Google 캘린더(primary) | 1분 | 지난 1년~앞으로 2년 일정을 가져옴. 이후에는 `syncToken`으로 바뀐 것만 가져옴. Google에서 취소된 일정은 ORBIT에서도 삭제 |
+| Gmail 받은편지함 | 1시간 | 최근 7일 메일 **제목**을 `[메일] 제목` 형식의 할 일로 자동 추가 |
+| 시간 충돌 시 | - | 자동 반영하지 않고 "검토함"으로 보냄 (409 `SLOT_CONFLICT` 처리) |
+
+- 권한이 `readonly`라서, **ORBIT에서 만든 할 일·일정·승인한 예약은 Google 캘린더에 올라가지 않습니다.** 동기화는 한 방향입니다.
+- Google에서 가져온 일정을 ORBIT에서 수정하거나 삭제해도 Google에는 반영되지 않습니다. 같은 내용이 다시 오면 `fingerprint`가 같아서 건너뛰므로, 두 쪽 데이터가 조용히 달라질 수 있습니다.
+- 동기화는 PC 프로그램이 켜져 있을 때만 돌아갑니다(`appMustRemainRunning:true`). README에도 이렇게 안내되어 있습니다.
+
+3) 잘 만든 부분
+- OAuth에 **PKCE**(`code_challenge S256`)와 랜덤 `state`를 썼고, 콜백을 로그인 세션과 묶어 10분 뒤 만료되게 했습니다(CSRF 방어).
+- 요청 권한을 읽기 전용(`readonly`)으로 최소화했습니다.
+- 클라이언트 ID·시크릿·refresh token을 코드에 넣지 않고 화면에서 입력받습니다. 저장할 때는 AES-GCM으로 암호화합니다.
+- 연결이 안 된 상태에서는 `not_connected`를 반환하고, 동기화에 성공했다고 표시하지 않습니다(PRD 원칙과 일치).
+
+4) 리뷰 중 보인 현상과의 관계
+
+| 현상 | Google 연동과 관련 있나? |
+|---|---|
+| 1인용(사용자 구분 없음) | **관련 있음.** 개인 Google 계정 하나에 맞춘 설계라 다중 사용자 구조가 빠졌고, PRD의 Supabase·RLS·계정 격리도 구현되지 않음 |
+| 첫 화면에 남의 일정처럼 보이는 데이터 | 관련 없음. `demo-state.mjs`의 고정 예시 데이터 |
+| 삭제 시 "Failed to fetch" | 관련 가능성 낮음. 리뷰어 PC는 Google이 연결되지 않아 동기화가 바로 `not_connected`로 끝남. 원인은 별도 확인 필요 |
+
 ---
 
 [O]  **2. 보안 검토를 수행했나요?**
@@ -111,7 +154,7 @@ decide(owner,id,action,body,key) {return repo.transaction(()=>idem(`decision:${o
   ```
 - ⚠️ 다만 **개인 연락처가 코드에 들어 있습니다** → 개선 제안 1 참고.
   - `scheduler.mjs` 6행의 기본 설정값 `senderPhone:'010-****-6269'` (실제 번호, 리뷰에서는 가림)
-  - 번들 `Readme.txt`의 Google 계정 이메일
+  - 번들 `Readme.txt`와 `google.mjs` 3행(`const ACCOUNT=...`)의 Google 계정 이메일
 
 **(2) 인증·세션**
 ```js
@@ -212,7 +255,13 @@ res.setHeader('Set-Cookie',`orbit=${token}; HttpOnly; SameSite=Strict; Path=/; M
   - 기본값을 실제 데이터로 두거나, 실제 데이터가 비어 있을 때만 예시를 보여 주기
   - 예시일 때는 화면 상단에 "예시 데이터입니다" 배너를 크게 표시하기
 
-**⑦ 작은 사용성 개선**
+**⑦ Google 연동을 "누구나 자기 계정으로" 쓸 수 있게**
+- 고정 계정을 없애야 합니다. `ACCOUNT` 상수와 `ACCOUNT_MISMATCH` 검사를 지우고, OAuth로 연결된 계정(`profile.emailAddress`)을 그대로 저장하면 됩니다. 그러면 다른 사람도 자기 Google 캘린더를 연동할 수 있고, 코드에서 개인 이메일도 빠집니다.
+- 여러 사람이 함께 쓰는 서비스로 키우려면 Google 연동 정보(refresh token)를 사용자별로 저장해야 합니다(`owner_id`별 `private_config`). 이 작업은 ⑥의 사용자 구분과 같이 진행해야 합니다.
+- 한 방향 동기화라는 점을 화면에 밝혀 주세요. 예: "Google → ORBIT 가져오기만 지원". 양방향이 목표라면 `calendar.events` 쓰기 권한과 충돌 처리 규칙을 PRD에 추가하는 것을 제안합니다.
+- Gmail 제목이 자동으로 할 일이 되는 기능은 개인정보가 많이 들어오는 기능입니다. 기본값을 "끔"으로 하고 사용자가 직접 켜도록 하는 것이 안전합니다.
+
+**⑧ 작은 사용성 개선**
 - 할 일 삭제에 확인 단계나 실행 취소가 없습니다.
 
 ---
@@ -227,6 +276,7 @@ Todo 앱 과제를 **"고객 예약을 직접 승인하는 개인 일정 서비�
   - 소스가 레포에 없고 exe만 있어서 리뷰하기 어렵습니다.
   - 코드에 실제 연락처가 들어 있습니다.
   - PRD의 Supabase·RLS·계정 격리가 실제 구현과 다릅니다. 실제 앱은 PC당 비밀번호 1개인 1인용 구조입니다.
+  - Google 캘린더 연동이 개발자 계정 하나로 고정되어 있습니다. 이것이 1인용 구조가 된 주된 배경으로 보이고, 다른 사용자는 연동 기능을 쓸 수 없습니다.
   - 예시 데이터가 기본으로 보여서, 처음 쓰는 사람이 다른 사람의 일정으로 오해할 수 있습니다.
   - 디버깅·테스트 기록이 남아 있지 않습니다.
 
